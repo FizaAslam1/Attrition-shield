@@ -109,7 +109,6 @@ feature_order = [
 
 # 🔧 Load Assets from base64 encoded file
 from assets_data import MODEL_BASE64, SCALER_BASE64, THRESHOLD
-
 @st.cache_resource
 def load_assets():
     temp_dir = tempfile.mkdtemp()
@@ -124,7 +123,10 @@ def load_assets():
     with open(scaler_path, 'wb') as f:
         f.write(base64.b64decode(SCALER_BASE64))
     
-    model = tf.keras.models.load_model(model_path)
+    # Load with compile=False
+    model = tf.keras.models.load_model(model_path, compile=False)
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    
     scaler = joblib.load(scaler_path)
     threshold = float(THRESHOLD.strip())
     
