@@ -1,96 +1,44 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import joblib
-import tensorflow as tf
 import plotly.graph_objects as go
-import base64
-import tempfile
-import os
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from imblearn.over_sampling import SMOTE
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 
 # ⚙️ Page Config
-st.set_page_config(
-    page_title="Attrition Shield | HR Analytics",
-    page_icon="🛡️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Attrition Shield | HR Analytics", page_icon="🛡️", layout="wide")
 
-# 🎨 Custom CSS — Bright & Professional
+# 🎨 Custom CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    
     * { font-family: 'Inter', sans-serif; }
-    
-    .stApp {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    }
-    
+    .stApp { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); }
     h1, h2, h3, h4, h5, h6 { color: #ffffff !important; }
     p, label, span { color: #e0e0e0 !important; }
-    
-    .stSidebar {
-        background: linear-gradient(180deg, #0d1117 0%, #161b22 100%);
-    }
-    .stSidebar h2, .stSidebar h3, .stSidebar p, .stSidebar label { color: #f0f0f0 !important; }
-    .stSidebar [data-testid="stMarkdownContainer"] p { color: #c9d1d9 !important; }
-    
     .stButton > button {
         background: linear-gradient(90deg, #6c5ce7, #a855f7);
-        color: white !important;
-        border: none;
-        border-radius: 12px;
-        padding: 1rem 2rem;
-        font-size: 1.2rem;
-        font-weight: 700;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 20px rgba(108, 92, 231, 0.5);
-        width: 100%;
-        letter-spacing: 1px;
+        color: white !important; border: none; border-radius: 12px;
+        padding: 1rem 2rem; font-size: 1.2rem; font-weight: 700;
+        box-shadow: 0 4px 20px rgba(108, 92, 231, 0.5); width: 100%;
     }
-    .stButton > button:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 30px rgba(168, 85, 247, 0.7);
-        background: linear-gradient(90deg, #7c3aed, #c084fc);
-    }
-    
     .risk-high {
         background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.05));
-        border: 2px solid #ef4444;
-        border-radius: 20px;
-        padding: 2rem;
+        border: 2px solid #ef4444; border-radius: 20px; padding: 2rem;
     }
-    .risk-high h2 { color: #fca5a5 !important; }
-    .risk-high h3 { color: #fecaca !important; }
-    .risk-high h4 { color: #fbbf24 !important; }
-    .risk-high li { color: #e5e7eb !important; font-size: 1.05rem; }
-    
     .risk-low {
         background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(34, 197, 94, 0.05));
-        border: 2px solid #22c55e;
-        border-radius: 20px;
-        padding: 2rem;
+        border: 2px solid #22c55e; border-radius: 20px; padding: 2rem;
     }
-    .risk-low h2 { color: #86efac !important; }
-    .risk-low h3 { color: #bbf7d0 !important; }
-    .risk-low h4 { color: #4ade80 !important; }
-    .risk-low li { color: #e5e7eb !important; font-size: 1.05rem; }
-    
     .title-text {
-        font-size: 3.5rem;
-        font-weight: 800;
+        font-size: 3.5rem; font-weight: 800;
         background: linear-gradient(90deg, #a78bfa, #60a5fa, #34d399);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         text-align: center;
-    }
-    
-    [data-testid="stMetricValue"] { color: #ffffff !important; font-weight: 700 !important; }
-    [data-testid="stMetricDelta"] { color: #fbbf24 !important; }
-    [data-testid="stMetricLabel"] { color: #9ca3af !important; }
-    .stSlider label, .stNumberInput label, .stSelectbox label, .stRadio label {
-        color: #d1d5db !important; font-weight: 500 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -107,31 +55,59 @@ feature_order = [
     'YearsInCurrentRole', 'YearsSinceLastPromotion', 'YearsWithCurrManager'
 ]
 
-# 🔧 Load Assets
-from assets_data import MODEL_BASE64, SCALER_BASE64, THRESHOLD
-
+# 🔧 Train Model On-the-Fly (Cached Resource)
 @st.cache_resource
-def load_assets():
-    temp_dir = tempfile.mkdtemp()
+def get_model_and_scaler():
+    # Load data from GitHub (IBM HR Analytics)
+    url = "https://raw.githubusercontent.com/FlipRoboTechnologies/HR_Analytics_Employee_Attrition/master/WA_Fn-UseC_-HR-Employee-Attrition.csv"
+    df = pd.read_csv(url)
     
-    # Decode model (.keras format)
-    model_path = os.path.join(temp_dir, 'model.keras')
-    with open(model_path, 'wb') as f:
-        f.write(base64.b64decode(MODEL_BASE64))
+    # Drop useless columns
+    df.drop(['EmployeeCount', 'EmployeeNumber', 'Over18', 'StandardHours'], axis=1, inplace=True)
     
-    # Decode scaler
-    scaler_path = os.path.join(temp_dir, 'scaler.pkl')
-    with open(scaler_path, 'wb') as f:
-        f.write(base64.b64decode(SCALER_BASE64))
+    # Encode categorical columns
+    le = LabelEncoder()
+    for col in df.select_dtypes(include='object').columns:
+        if col != 'Attrition':
+            df[col] = le.fit_transform(df[col])
+    df['Attrition'] = df['Attrition'].map({'Yes': 1, 'No': 0})
     
-    # Load
-    model = tf.keras.models.load_model(model_path)
-    scaler = joblib.load(scaler_path)
-    threshold = float(THRESHOLD.strip())
+    # Split features and labels
+    X = df.drop('Attrition', axis=1)
+    y = df['Attrition']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    return model, scaler, threshold
+    # Handle class imbalance with SMOTE
+    smote = SMOTE(random_state=42)
+    X_train, y_train = smote.fit_resample(X_train, y_train)
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    
+    # Build the ANN Model
+    model = Sequential([
+        Dense(64, activation='relu', input_shape=(X_train.shape[1],)),
+        BatchNormalization(),
+        Dropout(0.3),
+        Dense(32, activation='relu'),
+        Dropout(0.3),
+        Dense(1, activation='sigmoid')
+    ])
+    
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    
+    # Train
+    model.fit(X_train, y_train, epochs=20, batch_size=16, verbose=0, validation_split=0.1)
+    
+    return model, scaler
 
-model, scaler, threshold = load_assets()
+# Load/Cache model and scaler
+try:
+    model, scaler = get_model_and_scaler()
+except Exception as e:
+    st.error(f"Failed to load or train the model: {e}")
+    st.stop()
 
 # 🎯 Main UI Header
 col1, col2, col3 = st.columns([0.1, 0.8, 0.1])
@@ -186,7 +162,7 @@ with st.sidebar:
     total_working_years = st.slider("Total Working Years", 1, 50, 10)
     num_companies_worked = st.number_input("Number of Companies Worked", 0, 20, 2)
 
-# 🎯 Main Prediction Area
+# 🎯 Predict
 col1, col2, col3 = st.columns([0.05, 0.9, 0.05])
 with col2:
     if st.button("🔍 Analyze Attrition Risk", use_container_width=True):
@@ -194,12 +170,12 @@ with col2:
             
             input_dict = {
                 'Age': age,
-                'BusinessTravel': 1,
-                'DailyRate': 777.22,
+                'BusinessTravel': 1,  # Default: Travel_Rarely
+                'DailyRate': 777.22,  # Average
                 'Department': {'Sales': 0, 'Research & Development': 1, 'Human Resources': 2}.get(department, 0),
                 'DistanceFromHome': distance_from_home,
-                'Education': 3,
-                'EducationField': 0,
+                'Education': 3,  # Default: Bachelor's
+                'EducationField': 0,  # Default: Life Sciences
                 'EnvironmentSatisfaction': environment_satisfaction,
                 'Gender': 1 if gender == 'Male' else 0,
                 'HourlyRate': 65.00,
@@ -217,7 +193,7 @@ with col2:
                 'NumCompaniesWorked': num_companies_worked,
                 'OverTime': 1 if overtime == 'Yes' else 0,
                 'PercentSalaryHike': percent_salary_hike,
-                'PerformanceRating': 3,
+                'PerformanceRating': 3,  # Default: Meets Expectations
                 'RelationshipSatisfaction': relationship_satisfaction,
                 'StockOptionLevel': stock_option_level,
                 'TotalWorkingYears': total_working_years,
@@ -234,6 +210,8 @@ with col2:
             
             probability = model.predict(input_scaled, verbose=0)[0][0]
             risk_percentage = probability * 100
+            
+            threshold = 0.38
             
             st.markdown('<br>', unsafe_allow_html=True)
             
@@ -266,11 +244,11 @@ with col2:
             if probability > threshold:
                 st.markdown(f"""
                 <div class="risk-high">
-                    <h2>⚠️ HIGH ATTRITION RISK</h2>
-                    <h3>{risk_percentage:.1f}% Probability of Resignation</h3>
+                    <h2 style="color:#ff4757; text-align:center;">⚠️ HIGH ATTRITION RISK</h2>
+                    <h3 style="text-align:center; color:#ff6b6b;">{risk_percentage:.1f}% Probability of Resignation</h3>
                     <br>
-                    <h4>📋 Recommended Actions:</h4>
-                    <ul>
+                    <h4 style="color:#ffa502;">📋 Recommended Actions:</h4>
+                    <ul style="color:#ddd; font-size:1.1rem;">
                         <li>Schedule immediate 1-on-1 meeting with employee</li>
                         <li>Review compensation package & consider salary adjustment</li>
                         <li>Reduce overtime burden if applicable</li>
@@ -282,11 +260,11 @@ with col2:
             else:
                 st.markdown(f"""
                 <div class="risk-low">
-                    <h2>✅ LOW ATTRITION RISK</h2>
-                    <h3>{risk_percentage:.1f}% Probability of Resignation</h3>
+                    <h2 style="color:#2ed573; text-align:center;">✅ LOW ATTRITION RISK</h2>
+                    <h3 style="text-align:center; color:#7bed9f;">{risk_percentage:.1f}% Probability of Resignation</h3>
                     <br>
-                    <h4>💡 Retention Tips:</h4>
-                    <ul>
+                    <h4 style="color:#2ed573;">💡 Retention Tips:</h4>
+                    <ul style="color:#ddd; font-size:1.1rem;">
                         <li>Continue engagement through regular feedback</li>
                         <li>Provide growth opportunities to maintain satisfaction</li>
                         <li>Recognize contributions publicly</li>
@@ -294,17 +272,6 @@ with col2:
                     </ul>
                 </div>
                 """, unsafe_allow_html=True)
-            
-            st.markdown('<br>', unsafe_allow_html=True)
-            m1, m2, m3, m4 = st.columns(4)
-            with m1:
-                st.metric("Risk Score", f"{risk_percentage:.1f}%", delta=f"{(risk_percentage - threshold*100):.1f}% from threshold")
-            with m2:
-                st.metric("Job Satisfaction", job_satisfaction)
-            with m3:
-                st.metric("Years at Company", years_at_company)
-            with m4:
-                st.metric("Threshold", f"{threshold*100:.0f}%")
 
 # Footer
 st.markdown('<br><br>', unsafe_allow_html=True)
