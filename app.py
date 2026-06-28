@@ -58,12 +58,27 @@ feature_order = [
 # 🔧 Train Model On-the-Fly (Cached Resource)
 @st.cache_resource
 def get_model_and_scaler():
-    # Load data from GitHub (IBM HR Analytics)
-    url = "https://raw.githubusercontent.com/FlipRoboTechnologies/HR_Analytics_Employee_Attrition/master/WA_Fn-UseC_-HR-Employee-Attrition.csv"
-    df = pd.read_csv(url)
+    # Multiple dataset sources
+    urls = [
+        "https://raw.githubusercontent.com/rshahid77/Employee-Attrition-Prediction/main/WA_Fn-UseC_-HR-Employee-Attrition.csv",
+        "https://raw.githubusercontent.com/pavansubhasht/ibm-hr-analytics-attrition-dataset/main/WA_Fn-UseC_-HR-Employee-Attrition.csv",
+        "https://raw.githubusercontent.com/tejshvij/IBM-HR-Analytics-Employee-Attrition-Performance/main/WA_Fn-UseC_-HR-Employee-Attrition.csv"
+    ]
     
-    # Drop useless columns
+    df = None
+    for url in urls:
+        try:
+            df = pd.read_csv(url)
+            break
+        except:
+            continue
+    
+    if df is None:
+        raise Exception("Could not load dataset")
+    
+    # Rest same as before...
     df.drop(['EmployeeCount', 'EmployeeNumber', 'Over18', 'StandardHours'], axis=1, inplace=True)
+    # ... continue with rest of function
     
     # Encode categorical columns
     le = LabelEncoder()
